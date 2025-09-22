@@ -410,3 +410,98 @@
     (ok collaboration-id)
   )
 )
+
+;; Update member reputation (guild founder or lead researcher only)
+(define-public (update-member-reputation (guild-id uint) (member principal) (reputation-change int))
+  (let
+    (
+      (guild (unwrap! (map-get? guilds { guild-id: guild-id }) ERR-GUILD-NOT-FOUND))
+      (target-member (unwrap! (map-get? guild-members { guild-id: guild-id, member: member }) ERR-NOT-MEMBER))
+      (new-reputation (+ (to-uint (+ (to-int (get reputation target-member)) reputation-change)) u0))
+    )
+    (asserts! (is-eq tx-sender (get founder guild)) ERR-NOT-AUTHORIZED)
+    (asserts! (and (>= reputation-change -50) (<= reputation-change 100)) ERR-INVALID-AMOUNT)
+    
+    (map-set guild-members
+      { guild-id: guild-id, member: member }
+      (merge target-member { reputation: new-reputation })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Distribute research rewards to guild members
+(define-public (distribute-rewards (research-id uint))
+  (let
+    (
+      (research (unwrap! (map-get? research-projects { research-id: research-id }) ERR-INVALID-PROPOSAL))
+      (guild (unwrap! (map-get? guilds { guild-id: (get guild-id research) }) ERR-GUILD-NOT-FOUND))
+      (reward-per-member (/ (get reward-pool research) (get member-count guild)))
+    )
+    (asserts! (is-eq (get status research) "completed") ERR-INVALID-PROPOSAL)
+    (asserts! (is-eq tx-sender (get lead-researcher research)) ERR-NOT-AUTHORIZED)
+    (asserts! (> (get reward-pool research) u0) ERR-INSUFFICIENT-FUNDS)
+    
+    ;; Simplified reward distribution - in practice would iterate through all members
+    (try! (as-contract (stx-transfer? reward-per-member tx-sender (get lead-researcher research))))
+    
+    (map-set research-projects
+      { research-id: research-id }
+      (merge research { reward-pool: u0 })
+    )
+    
+    (ok reward-per-member)
+  )
+)
+
+;; Read-only functions
+(define-read-only (get-guild (guild-id uint))
+  (map-get? guilds { guild-id: guild-id })
+)
+
+(define-read-only (get-member (guild-id uint) (member principal))
+  (map-get? guild-members { guild-id: guild-id, member: member })
+)
+
+(define-read-only (get-research (research-id uint))
+  (map-get? research-projects { research-id: research-id })
+)
+
+(define-read-only (get-collaboration (collaboration-id uint))
+  (map-get? guild-collaborations { collaboration-id: collaboration-id })
+)
+
+(define-read-only (get-guild-count)
+  (var-get guild-count)
+)
+
+(define-read-only (get-research-count)
+  (var-get research-count)
+)
+
+(define-read-only (get-platform-fee)
+  (var-get platform-fee)
+)
+
+(define-read-only (is-valid-specialization (specialization (string-ascii 50)))
+  (default-to { active: false, guild-count: u0 } (map-get? specializations { specialization: specialization }))
+)
+
+(define-read-only (get-guild-by-specialization (specialization (string-ascii 50)))
+  (map-get? specializations { specialization: specialization })
+)
+
+(define-read-only (calculate-member-share (guild-id uint) (member principal))
+  (let
+    (
+      (guild (map-get? guilds { guild-id: guild-id }))
+      (member-data (map-get? guild-members { guild-id: guild-id, member: member }))
+    )
+    (match guild
+      guild-info (match member-data
+        member-info (some (/ (* (get contribution member-info) u100) (get total-funds guild-info)))
+        none)
+      none)
+  )
+)
