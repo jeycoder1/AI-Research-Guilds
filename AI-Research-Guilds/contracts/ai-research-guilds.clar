@@ -124,7 +124,7 @@
         member-count: u1,
         total-funds: u0,
         reputation-score: u100,
-        created-at: block-height,
+        created-at: stacks-block-height,
         active: true,
         min-reputation-required: min-reputation
       }
@@ -134,11 +134,11 @@
       { guild-id: guild-id, member: tx-sender }
       {
         contribution: u0,
-        join-date: block-height,
+        join-date: stacks-block-height,
         reputation: u100,
         active: true,
         research-completed: u0,
-        last-activity: block-height
+        last-activity: stacks-block-height
       }
     )
     
@@ -169,11 +169,11 @@
       { guild-id: guild-id, member: tx-sender }
       {
         contribution: initial-contribution,
-        join-date: block-height,
+        join-date: stacks-block-height,
         reputation: u50,
         active: true,
         research-completed: u0,
-        last-activity: block-height
+        last-activity: stacks-block-height
       }
     )
     
@@ -252,7 +252,7 @@
     (asserts! (get active guild) ERR-GUILD-INACTIVE)
     (asserts! (get active member) ERR-NOT-AUTHORIZED)
     (asserts! (>= (get total-funds guild) budget) ERR-INSUFFICIENT-FUNDS)
-    (asserts! (> deadline block-height) ERR-INVALID-PROPOSAL)
+    (asserts! (> deadline stacks-block-height) ERR-INVALID-PROPOSAL)
     (asserts! (and (>= approval-threshold u51) (<= approval-threshold u100)) ERR-INVALID-THRESHOLD)
     
     (map-set research-projects
@@ -286,7 +286,7 @@
     (asserts! (get active member) ERR-NOT-AUTHORIZED)
     (asserts! (is-none existing-vote) ERR-ALREADY-VOTED)
     (asserts! (is-eq (get status research) "proposed") ERR-INVALID-PROPOSAL)
-    (asserts! (< block-height (get deadline research)) ERR-INVALID-PROPOSAL)
+    (asserts! (< stacks-block-height (get deadline research)) ERR-INVALID-PROPOSAL)
     
     (map-set member-votes
       { research-id: research-id, member: tx-sender }
@@ -296,7 +296,7 @@
     ;; Update member activity
     (map-set guild-members
       { guild-id: (get guild-id research), member: tx-sender }
-      (merge member { last-activity: block-height })
+      (merge member { last-activity: stacks-block-height })
     )
     
     (ok true)
@@ -313,7 +313,7 @@
     (asserts! (or (is-eq tx-sender (get founder guild)) 
                   (is-eq tx-sender (get lead-researcher research))) ERR-NOT-AUTHORIZED)
     (asserts! (is-eq (get status research) "proposed") ERR-INVALID-PROPOSAL)
-    (asserts! (< block-height (get deadline research)) ERR-INVALID-PROPOSAL)
+    (asserts! (< stacks-block-height (get deadline research)) ERR-INVALID-PROPOSAL)
     
     (map-set research-projects
       { research-id: research-id }
@@ -367,7 +367,7 @@
       (merge member { 
         research-completed: (+ (get research-completed member) u1),
         reputation: (+ (get reputation member) u30),
-        last-activity: block-height
+        last-activity: stacks-block-height
       })
     )
     
@@ -402,7 +402,7 @@
         project-title: project-title,
         joint-budget: joint-budget,
         status: "proposed",
-        created-at: block-height
+        created-at: stacks-block-height
       }
     )
     
