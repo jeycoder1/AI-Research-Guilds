@@ -235,3 +235,178 @@
     (ok true)
   )
 )
+
+;; Propose research project with deadline
+(define-public (propose-research 
+  (guild-id uint)
+  (title (string-ascii 100))
+  (budget uint)
+  (deadline uint)
+  (approval-threshold uint))
+  (let
+    (
+      (research-id (+ (var-get research-count) u1))
+      (guild (unwrap! (map-get? guilds { guild-id: guild-id }) ERR-GUILD-NOT-FOUND))
+      (member (unwrap! (map-get? guild-members { guild-id: guild-id, member: tx-sender }) ERR-NOT-MEMBER))
+    )
+    (asserts! (get active guild) ERR-GUILD-INACTIVE)
+    (asserts! (get active member) ERR-NOT-AUTHORIZED)
+    (asserts! (>= (get total-funds guild) budget) ERR-INSUFFICIENT-FUNDS)
+    (asserts! (> deadline block-height) ERR-INVALID-PROPOSAL)
+    (asserts! (and (>= approval-threshold u51) (<= approval-threshold u100)) ERR-INVALID-THRESHOLD)
+    
+    (map-set research-projects
+      { research-id: research-id }
+      {
+        title: title,
+        guild-id: guild-id,
+        lead-researcher: tx-sender,
+        budget: budget,
+        status: "proposed",
+        findings-hash: none,
+        reward-pool: u0,
+        deadline: deadline,
+        approval-threshold: approval-threshold
+      }
+    )
+    
+    (var-set research-count research-id)
+    (ok research-id)
+  )
+)
+
+;; Vote on research proposal
+(define-public (vote-on-research (research-id uint) (approve bool))
+  (let
+    (
+      (research (unwrap! (map-get? research-projects { research-id: research-id }) ERR-INVALID-PROPOSAL))
+      (member (unwrap! (map-get? guild-members { guild-id: (get guild-id research), member: tx-sender }) ERR-NOT-MEMBER))
+      (existing-vote (map-get? member-votes { research-id: research-id, member: tx-sender }))
+    )
+    (asserts! (get active member) ERR-NOT-AUTHORIZED)
+    (asserts! (is-none existing-vote) ERR-ALREADY-VOTED)
+    (asserts! (is-eq (get status research) "proposed") ERR-INVALID-PROPOSAL)
+    (asserts! (< block-height (get deadline research)) ERR-INVALID-PROPOSAL)
+    
+    (map-set member-votes
+      { research-id: research-id, member: tx-sender }
+      { voted: true, approved: approve }
+    )
+    
+    ;; Update member activity
+    (map-set guild-members
+      { guild-id: (get guild-id research), member: tx-sender }
+      (merge member { last-activity: block-height })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Approve research project (simplified - in practice would need vote counting)
+(define-public (approve-research (research-id uint))
+  (let
+    (
+      (research (unwrap! (map-get? research-projects { research-id: research-id }) ERR-INVALID-PROPOSAL))
+      (guild (unwrap! (map-get? guilds { guild-id: (get guild-id research) }) ERR-GUILD-NOT-FOUND))
+    )
+    (asserts! (or (is-eq tx-sender (get founder guild)) 
+                  (is-eq tx-sender (get lead-researcher research))) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status research) "proposed") ERR-INVALID-PROPOSAL)
+    (asserts! (< block-height (get deadline research)) ERR-INVALID-PROPOSAL)
+    
+    (map-set research-projects
+      { research-id: research-id }
+      (merge research { status: "approved" })
+    )
+    
+    (map-set guilds
+      { guild-id: (get guild-id research) }
+      (merge guild { total-funds: (- (get total-funds guild) (get budget research)) })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Submit research findings with reward distribution
+(define-public (submit-findings (research-id uint) (findings-hash (buff 32)) (reward-amount uint))
+  (let
+    (
+      (research (unwrap! (map-get? research-projects { research-id: research-id }) ERR-INVALID-PROPOSAL))
+      (guild (unwrap! (map-get? guilds { guild-id: (get guild-id research) }) ERR-GUILD-NOT-FOUND))
+      (member (unwrap! (map-get? guild-members { guild-id: (get guild-id research), member: tx-sender }) ERR-NOT-MEMBER))
+      (platform-fee-amount (/ (* reward-amount (var-get platform-fee)) u1000))
+      (net-reward (- reward-amount platform-fee-amount))
+    )
+    (asserts! (is-eq tx-sender (get lead-researcher research)) ERR-NOT-AUTHORIZED)
+    (asserts! (is-eq (get status research) "approved") ERR-INVALID-PROPOSAL)
+    (asserts! (> reward-amount u0) ERR-INVALID-AMOUNT)
+    (try! (stx-transfer? reward-amount tx-sender (as-contract tx-sender)))
+    
+    (map-set research-projects
+      { research-id: research-id }
+      (merge research { 
+        status: "completed",
+        findings-hash: (some findings-hash),
+        reward-pool: net-reward
+      })
+    )
+    
+    (map-set guilds
+      { guild-id: (get guild-id research) }
+      (merge guild { 
+        reputation-score: (+ (get reputation-score guild) u20),
+        total-funds: (+ (get total-funds guild) net-reward)
+      })
+    )
+    
+    ;; Update lead researcher stats
+    (map-set guild-members
+      { guild-id: (get guild-id research), member: tx-sender }
+      (merge member { 
+        research-completed: (+ (get research-completed member) u1),
+        reputation: (+ (get reputation member) u30),
+        last-activity: block-height
+      })
+    )
+    
+    (ok true)
+  )
+)
+
+;; Create inter-guild collaboration
+(define-public (create-collaboration 
+  (guild-a uint) 
+  (guild-b uint) 
+  (project-title (string-ascii 100)) 
+  (joint-budget uint))
+  (let
+    (
+      (collaboration-id (+ (var-get collaboration-count) u1))
+      (guild-a-data (unwrap! (map-get? guilds { guild-id: guild-a }) ERR-GUILD-NOT-FOUND))
+      (guild-b-data (unwrap! (map-get? guilds { guild-id: guild-b }) ERR-GUILD-NOT-FOUND))
+      (member-a (unwrap! (map-get? guild-members { guild-id: guild-a, member: tx-sender }) ERR-NOT-MEMBER))
+    )
+    (asserts! (get active guild-a-data) ERR-GUILD-INACTIVE)
+    (asserts! (get active guild-b-data) ERR-GUILD-INACTIVE)
+    (asserts! (not (is-eq guild-a guild-b)) ERR-INVALID-PROPOSAL)
+    (asserts! (get active member-a) ERR-NOT-AUTHORIZED)
+    (asserts! (>= (get reputation member-a) u100) ERR-NOT-AUTHORIZED)
+    
+    (map-set guild-collaborations
+      { collaboration-id: collaboration-id }
+      {
+        guild-a: guild-a,
+        guild-b: guild-b,
+        project-title: project-title,
+        joint-budget: joint-budget,
+        status: "proposed",
+        created-at: block-height
+      }
+    )
+    
+    (var-set collaboration-count collaboration-id)
+    (ok collaboration-id)
+  )
+)
